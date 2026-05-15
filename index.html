@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Beleggingen</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #0b0e17; --surface: #131724; --card: #1a1f30; --border: #252b3d;
+  --gold:    #c9a84c; --gold2:   #e8c97a; --text: #e2e5f0; --muted:  #6b7090;
+  --green:   #4ade80; --red:     #f87171; --orange: #fb923c;
+  --font:    'Outfit', sans-serif; --mono: 'DM Mono', monospace;
+  --serif:   'Cormorant Garamond', serif; --nav-h: 64px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; overflow: hidden; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+#top-area { flex-shrink: 0; }
+#screens { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px 16px calc(var(--nav-h) + 20px); }
+#screens::-webkit-scrollbar { width: 4px; }
+#screens::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* STATUS BAR */
+#status-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 10px; }
+.sdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background .3s; }
+.sdot.ok   { background: var(--green); }
+.sdot.warn { background: var(--orange); animation: pulse 1.5s ease-in-out infinite; }
+.sdot.idle { background: var(--muted); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+#status-text { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* EXPORT REMINDER BANNER */
+#export-banner { display: none; background: rgba(251,146,60,.07); border-bottom: 1px solid rgba(251,146,60,.25); padding: 11px 16px; align-items: center; gap: 10px; }
+#export-banner.show { display: flex; }
+.ban-icon { font-size: 18px; flex-shrink: 0; }
+.ban-text { flex: 1; font-size: 13px; color: var(--orange); line-height: 1.4; }
+.ban-btn { padding: 7px 13px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid rgba(251,146,60,.35); background: rgba(251,146,60,.1); color: var(--orange); white-space: nowrap; }
+
+/* IMPORT MODAL */
+#import-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.72); z-index: 300; align-items: flex-end; }
+#import-modal.show { display: flex; }
+.modal-sheet { background: var(--card); border-top: 1px solid var(--border); border-radius: 20px 20px 0 0; padding: 28px 24px 44px; width: 100%; animation: slideUp .3s ease; }
+@keyframes slideUp { from{transform:translateY(100%)} to{transform:none} }
+.modal-title { font-family: var(--serif); font-size: 22px; color: var(--gold); margin-bottom: 8px; }
+.modal-sub { font-size: 14px; color: var(--muted); line-height: 1.55; margin-bottom: 24px; }
+.modal-actions { display: flex; flex-direction: column; gap: 10px; }
+
+/* BOTTOM NAV */
+#nav { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-h); background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-around; z-index: 100; padding: 0 4px; }
+.nav-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 10px; cursor: pointer; border: none; background: transparent; color: var(--muted); transition: all .2s; flex: 1; }
+.nav-btn .icon  { font-size: 20px; }
+.nav-btn .label { font-size: 10px; font-weight: 500; letter-spacing: .3px; }
+.nav-btn.active { color: var(--gold); background: rgba(201,168,76,.08); }
+
+/* SCREENS */
+.screen { display: none; animation: fadeUp .25s ease; }
+.screen.active { display: block; }
+@keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+
+/* TYPOGRAPHY */
+.page-title { font-family: var(--serif); font-size: 26px; font-weight: 600; color: var(--gold); margin-bottom: 4px; }
+.page-sub   { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+/* CARDS */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+.card-title { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+
+/* FORMS */
+.form-group { margin-bottom: 14px; }
+label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; letter-spacing: .5px; text-transform: uppercase; }
+input, select { width: 100%; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font); font-size: 15px; appearance: none; -webkit-appearance: none; outline: none; transition: border-color .2s; }
+input:focus, select:focus { border-color: var(--gold); }
+select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7090' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
+
+/* BUTTONS */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 13px 20px; border-radius: 9px; font-family: var(--font); font-size: 15px; font-weight: 500; cursor: pointer; border: none; transition: all .18s; width: 100%; }
+.btn-primary { background: var(--gold); color: #0b0e17; }
+.btn-primary:active { transform: scale(.97); }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn-outline:hover { border-color: var(--gold); color: var(--gold); }
+.btn-orange { background: rgba(251,146,60,.1); border: 1px solid rgba(251,146,60,.3); color: var(--orange); }
+.btn-danger { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.25); color: var(--red); }
+.btn-sm { padding: 7px 12px; font-size: 13px; border-radius: 7px; width: auto; }
+
+/* MONTH BAR */
+.month-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.month-bar input[type=month] { flex: 1; font-family: var(--mono); }
+
+/* ENTRY LIST */
+.entry-list { display: flex; flex-direction: column; gap: 8px; }
+.entry-item { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
+.entry-item .info { flex: 1; min-width: 0; }
+.entry-item .cat    { font-size: 11px; color: var(--gold); text-transform: uppercase; letter-spacing: .8px; }
+.entry-item .detail { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entry-item .amount { font-family: var(--mono); font-size: 15px; white-space: nowrap; }
+.del-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 18px; padding: 4px; }
+.del-btn:hover { color: var(--red); }
+
+/* STATS */
+.stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 5px; }
+.stat-value { font-family: var(--mono); font-size: 18px; }
+.stat-value.up { color: var(--green); } .stat-value.down { color: var(--red); }
+
+/* CHARTS */
+.chart-wrap { position: relative; width: 100%; height: 220px; }
+.chart-wrap.tall { height: 280px; }
+
+/* TABS */
+.tabs { display: flex; gap: 6px; margin-bottom: 16px; overflow-x: auto; padding-bottom: 2px; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { padding: 7px 14px; border-radius: 20px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; background: transparent; transition: all .18s; }
+.tab.active { background: rgba(201,168,76,.1); border-color: var(--gold); color: var(--gold); }
+
+/* TOP5 */
+.top5-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.top5-item:last-child { border: none; }
+.top5-rank { font-family: var(--mono); font-size: 11px; color: var(--muted); width: 22px; }
+.top5-bar-wrap { flex: 1; }
+.top5-name { font-size: 13px; margin-bottom: 4px; }
+.top5-bar-bg { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.top5-bar { height: 100%; border-radius: 3px; transition: width .5s; }
+.top5-val { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+
+/* STD LIST */
+.std-item { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 10px; }
+.std-item:last-child { border: none; }
+.std-cat { font-size: 13px; color: var(--gold); font-weight: 500; width: 35%; }
+.std-sub { font-size: 13px; flex: 1; }
+
+/* SECTION HDR */
+.section-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.section-hdr h3 { font-size: 14px; font-weight: 600; }
+
+/* TOAST */
+#toast { position: fixed; bottom: calc(var(--nav-h) + 14px); left: 50%; transform: translateX(-50%) translateY(60px); background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 10px 18px; border-radius: 20px; font-size: 13px; z-index: 200; transition: transform .25s; pointer-events: none; white-space: nowrap; }
+#toast.show { transform: translateX(-50%) translateY(0); }
+#toast.ok   { border-color: var(--green);  color: var(--green);  }
+#toast.err  { border-color: var(--red);    color: var(--red);    }
+#toast.warn { border-color: var(--orange); color: var(--orange); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOP AREA: status + banner -->
+  <div id="top-area">
+    <div id="status-bar">
+      <div class="sdot idle" id="sdot"></div>
+      <span id="status-text">Bezig met laden…</span>
+      <div id="status-actions"></div>
+    </div>
+    <!-- Export reminder banner (iPhone only, shown when unsaved changes) -->
+    <div id="export-banner">
+      <span class="ban-icon">💾</span>
+      <div class="ban-text">Wijzigingen niet opgeslagen — exporteer naar OneDrive!</div>
+      <button class="ban-btn" onclick="exportDB()">Exporteer</button>
+    </div>
+  </div>
+
+  <!-- SCREENS -->
+  <div id="screens">
+
+    <!-- INVOER -->
+    <div id="screen-invoer" class="screen active">
+      <div class="page-title">Invoer</div>
+      <div class="page-sub">Voeg beleggingen toe voor een maand</div>
+      <div class="month-bar">
+        <input type="month" id="inp-maand" onchange="refreshInvoer()">
+      </div>
+      <div class="card">
+        <div class="card-title">Nieuwe belegging</div>
+        <div class="form-group"><label>Categorie</label>
+          <select id="inp-cat" onchange="fillSubcat()"><option value="">Kies categorie…</option></select></div>
+        <div class="form-group"><label>Subcategorie</label>
+          <select id="inp-subcat"><option value="">Kies subcategorie…</option></select></div>
+        <div class="form-group"><label>Detailbelegging</label>
+          <input type="text" id="inp-detail" placeholder="bv. IWDA ETF"></div>
+        <div class="form-group"><label>Bedrag (€)</label>
+          <input type="number" id="inp-bedrag" placeholder="0.00" step="0.01" min="0"></div>
+        <button class="btn btn-primary" onclick="addRecord()">+ Toevoegen</button>
+      </div>
+      <div class="section-hdr">
+        <h3 id="entries-title">Ingevoerd deze maand</h3>
+        <span id="entries-total" style="font-family:var(--mono);color:var(--gold);font-size:14px"></span>
+      </div>
+      <div id="entries-list" class="entry-list"></div>
+    </div>
+
+    <!-- INSTELLINGEN -->
+    <div id="screen-instellingen" class="screen">
+      <div class="page-title">Instellingen</div>
+      <div class="page-sub">Standaardwaarden voor categorie &amp; subcategorie</div>
+      <div class="card">
+        <div class="card-title">Nieuw paar toevoegen</div>
+        <div class="form-group"><label>Categorie</label><input type="text" id="std-cat-inp" placeholder="bv. Aandelen"></div>
+        <div class="form-group"><label>Subcategorie</label><input type="text" id="std-sub-inp" placeholder="bv. ETF's"></div>
+        <button class="btn btn-primary" onclick="addStandaard()">+ Toevoegen</button>
+      </div>
+      <div class="card"><div class="card-title">Bestaande waarden</div><div id="std-list"></div></div>
+    </div>
+
+    <!-- OVERZICHT -->
+    <div id="screen-overzicht" class="screen">
+      <div class="page-title">Overzicht</div>
+      <div class="page-sub">Evolutie per categorie over de tijd</div>
+      <div class="stats-row" id="overzicht-stats"></div>
+      <div class="card"><div class="card-title">Evolutie per categorie</div>
+        <div class="chart-wrap tall"><canvas id="chart-overzicht"></canvas></div></div>
+      <div id="cat-breakdown"></div>
+    </div>
+
+    <!-- CATEGORIE -->
+    <div id="screen-categorie" class="screen">
+      <div class="page-title">Categorie</div>
+      <div class="page-sub">Detail per subcategorie</div>
+      <div class="tabs" id="cat-tabs"></div>
+      <div class="stats-row" id="cat-stats"></div>
+      <div class="card"><div class="card-title">Evolutie subcategorieën</div>
+        <div class="chart-wrap tall"><canvas id="chart-categorie"></canvas></div></div>
+      <div class="card"><div class="card-title">Detail per maand</div><div id="cat-table"></div></div>
+    </div>
+
+    <!-- TOP 5 -->
+    <div id="screen-top5" class="screen">
+      <div class="page-title">Top 5</div>
+      <div class="page-sub">Beste beleggingen in waarde &amp; groei</div>
+      <div class="card"><div class="card-title">🏆 Top 5 — Absolute waarde</div><div id="top5-abs"></div></div>
+      <div class="card"><div class="card-title">📈 Top 5 — Hoogste groei (%)</div><div id="top5-growth"></div></div>
+    </div>
+
+  </div>
+
+  <!-- BOTTOM NAV -->
+  <nav id="nav">
+    <button class="nav-btn active" onclick="navigate('invoer')"      id="nav-invoer">      <span class="icon">📥</span><span class="label">Invoer</span></button>
+    <button class="nav-btn"        onclick="navigate('instellingen')" id="nav-instellingen"><span class="icon">⚙️</span><span class="label">Instellingen</span></button>
+    <button class="nav-btn"        onclick="navigate('overzicht')"    id="nav-overzicht">   <span class="icon">📊</span><span class="label">Overzicht</span></button>
+    <button class="nav-btn"        onclick="navigate('categorie')"    id="nav-categorie">   <span class="icon">🏷️</span><span class="label">Categorie</span></button>
+    <button class="nav-btn"        onclick="navigate('top5')"         id="nav-top5">        <span class="icon">🏆</span><span class="label">Top 5</span></button>
+  </nav>
+</div>
+
+<!-- IMPORT MODAL (iPhone) -->
+<div id="import-modal">
+  <div class="modal-sheet">
+    <div class="modal-title">📥 Database importeren</div>
+    <div class="modal-sub">
+      Haal je <strong style="color:var(--text)">beleggingen.db</strong> op uit OneDrive of iCloud Drive
+      om verder te werken met je gegevens.<br><br>
+      Heb je nog geen bestand? Start dan met een lege database.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-orange" onclick="importDB()">📂 Importeer beleggingen.db</button>
+      <button class="btn btn-outline" onclick="startFresh()">Begin met lege database</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   DETECTIE: Chrome/Edge (Windows) vs Safari (iPhone)
+   AUTO_MODE = File System Access API beschikbaar
+══════════════════════════════════════════════════════ */
+const AUTO_MODE = 'showOpenFilePicker' in window;
+
+/* ══════ STATE ══════ */
+let db = null, SQL = null;
+let fileHandle  = null;   // Windows: FileSystemFileHandle
+let hasChanges  = false;  // iPhone: niet-geëxporteerde wijzigingen
+let currentScreen  = 'invoer';
+let activeCategory = null;
+let charts = {};
+
+/* ══════ INIT ══════ */
+window.addEventListener('DOMContentLoaded', async () => {
+  SQL = await initSqlJs({
+    locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}`
+  });
+  if (AUTO_MODE) await initWindows();
+  else            await initIphone();
+});
+
+/* ══════════════════════════════════════════════════════
+   WINDOWS — automatische opslag via File System Access API
+══════════════════════════════════════════════════════ */
+async function initWindows() {
+  setSt('idle', 'Windows — automatische opslag');
+  document.getElementById('status-actions').innerHTML =
+    `<button class="btn btn-outline btn-sm" onclick="pickFile()">📁 Koppel bestand</button>`;
+
+  const saved = await idbGetHandle();
+  if (saved) {
+    try {
+      const perm = await saved.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted' || (await saved.requestPermission({ mode: 'readwrite' })) === 'granted') {
+        fileHandle = saved;
+        await loadFromHandle();
+        return;
+      }
+    } catch {}
+  }
+  setSt('warn', 'Koppel een .db bestand om te beginnen');
+}
+
+async function pickFile() {
+  try {
+    [fileHandle] = await window.showOpenFilePicker({
+      types: [{ description: 'SQLite database', accept: { 'application/octet-stream': ['.db'] } }],
+      multiple: false
+    });
+  } catch {
+    try {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: 'beleggingen.db',
+        types: [{ description: 'SQLite database', accept: { 'application/octet-stream': ['.db'] } }]
+      });
+      db = new SQL.Database();
+      initTables();
+      await autoSave();
+      await idbSaveHandle(fileHandle);
+      afterDBLoad();
+      return;
+    } catch { return; }
+  }
+  await idbSaveHandle(fileHandle);
+  await loadFromHandle();
+}
+
+async function loadFromHandle() {
+  const file = await fileHandle.getFile();
+  const buf  = await file.arrayBuffer();
+  db = new SQL.Database(new Uint8Array(buf));
+  initTables();
+  setSt('ok', `Verbonden: ${fileHandle.name}`);
+  document.getElementById('status-actions').innerHTML =
+    `<button class="btn btn-outline btn-sm" onclick="pickFile()">📁 Wissel</button>`;
+  afterDBLoad();
+}
+
+async function autoSave() {
+  if (!fileHandle) return;
+  try {
+    const w = await fileHandle.createWritable();
+    await w.write(db.export());
+    await w.close();
+    showToast('Automatisch opgeslagen ✓', 'ok');
+  } catch { showToast('Opslaan mislukt', 'err'); }
+}
+
+/* ══════════════════════════════════════════════════════
+   IPHONE — handmatige import/export met waarschuwingen
+══════════════════════════════════════════════════════ */
+async function initIphone() {
+  setSt('warn', 'iPhone — handmatige sync vereist');
+  document.getElementById('status-actions').innerHTML =
+    `<button class="btn btn-orange btn-sm" onclick="importDB()">⬇ Import</button>
+     <button class="btn btn-outline btn-sm" onclick="exportDB()">⬆ Export</button>`;
+
+  // Laad gecachede DB uit IndexedDB (vorige sessie)
+  const cached = await idbGetDB();
+  if (cached) {
+    db = new SQL.Database(cached);
+    initTables();
+  } else {
+    db = new SQL.Database();
+    initTables();
+  }
+
+  // Toon altijd de import-modal zodat gebruiker kan kiezen
+  document.getElementById('import-modal').classList.add('show');
+
+  // Waarschuw wanneer app naar achtergrond gaat
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && hasChanges) {
+      showExportBanner();
+    }
+  });
+
+  afterDBLoad();
+}
+
+function startFresh() {
+  document.getElementById('import-modal').classList.remove('show');
+  showToast('Gestart met lege database', 'ok');
+}
+
+function showExportBanner() {
+  document.getElementById('export-banner').classList.add('show');
+}
+
+async function exportDB() {
+  const blob = new Blob([db.export()], { type: 'application/octet-stream' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: 'beleggingen.db' });
+  a.click();
+  URL.revokeObjectURL(url);
+  hasChanges = false;
+  document.getElementById('export-banner').classList.remove('show');
+  setSt('ok', 'Geëxporteerd — sla op in OneDrive');
+  showToast('Geëxporteerd ✓ — sla op in OneDrive', 'ok');
+}
+
+async function importDB() {
+  document.getElementById('import-modal').classList.remove('show');
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.db';
+  inp.onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const buf = await file.arrayBuffer();
+    db = new SQL.Database(new Uint8Array(buf));
+    initTables();
+    hasChanges = false;
+    document.getElementById('export-banner').classList.remove('show');
+    await idbSaveDB(db.export());
+    setSt('ok', `Geïmporteerd: ${file.name}`);
+    showToast('Database geïmporteerd ✓', 'ok');
+    navigate('invoer');
+  };
+  inp.click();
+}
+
+/* ══════ DB SETUP ══════ */
+function initTables() {
+  db.run(`CREATE TABLE IF NOT EXISTS beleggingen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    maand_jaar TEXT NOT NULL, categorie TEXT NOT NULL,
+    subcategorie TEXT, detailbelegging TEXT, bedrag REAL NOT NULL)`);
+  db.run(`CREATE TABLE IF NOT EXISTS standaard_waarden (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    categorie TEXT NOT NULL, subcategorie TEXT)`);
+}
+
+async function save() {
+  if (AUTO_MODE) {
+    await autoSave();
+  } else {
+    hasChanges = true;
+    showExportBanner();
+    setSt('warn', 'Niet opgeslagen — exporteer naar OneDrive');
+    await idbSaveDB(db.export());
+  }
+}
+
+function afterDBLoad() {
+  const inp = document.getElementById('inp-maand');
+  if (!inp.value) inp.value = new Date().toISOString().slice(0,7);
+  fillCatDropdown();
+  refreshInvoer();
+}
+
+function rows(sql, p=[]) {
+  try {
+    const r = db.exec(sql, p);
+    if (!r.length) return [];
+    return r[0].values.map(row => Object.fromEntries(r[0].columns.map((c,i) => [c, row[i]])));
+  } catch(e) { console.error(e); return []; }
+}
+function run(sql, p=[]) { db.run(sql, p); }
+
+/* ══════ IDB HELPERS ══════ */
+function openIDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('BeleggingApp', 2);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('handles')) d.createObjectStore('handles');
+      if (!d.objectStoreNames.contains('dbcache')) d.createObjectStore('dbcache');
+    };
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = () => rej();
+  });
+}
+async function idbSaveHandle(h) {
+  try { const d = await openIDB(); d.transaction('handles','readwrite').objectStore('handles').put(h,'main'); } catch {}
+}
+async function idbGetHandle() {
+  try {
+    const d = await openIDB();
+    return new Promise(res => {
+      const q = d.transaction('handles','readonly').objectStore('handles').get('main');
+      q.onsuccess = () => res(q.result || null);
+      q.onerror   = () => res(null);
+    });
+  } catch { return null; }
+}
+async function idbSaveDB(data) {
+  try { const d = await openIDB(); d.transaction('dbcache','readwrite').objectStore('dbcache').put(data,'main'); } catch {}
+}
+async function idbGetDB() {
+  try {
+    const d = await openIDB();
+    return new Promise(res => {
+      const q = d.transaction('dbcache','readonly').objectStore('dbcache').get('main');
+      q.onsuccess = () => res(q.result ? new Uint8Array(q.result) : null);
+      q.onerror   = () => res(null);
+    });
+  } catch { return null; }
+}
+
+/* ══════ STATUS ══════ */
+function setSt(type, text) {
+  document.getElementById('sdot').className = 'sdot ' + type;
+  document.getElementById('status-text').textContent = text;
+}
+
+/* ══════ NAVIGATION ══════ */
+function navigate(screen) {
+  currentScreen = screen;
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + screen).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('nav-' + screen).classList.add('active');
+  if (screen==='invoer')       renderInvoer();
+  if (screen==='instellingen') renderInstellingen();
+  if (screen==='overzicht')    renderOverzicht();
+  if (screen==='categorie')    renderCategorie();
+  if (screen==='top5')         renderTop5();
+}
+
+/* ══════ INVOER ══════ */
+function renderInvoer() { if(!db)return; fillCatDropdown(); refreshInvoer(); }
+
+function fillCatDropdown() {
+  const cats = [...new Set(rows('SELECT DISTINCT categorie FROM standaard_waarden ORDER BY categorie').map(r=>r.categorie))];
+  document.getElementById('inp-cat').innerHTML =
+    '<option value="">Kies categorie…</option>' + cats.map(c=>`<option value="${esc(c)}">${c}</option>`).join('');
+  fillSubcat();
+}
+function fillSubcat() {
+  const cat  = document.getElementById('inp-cat').value;
+  const subs = rows('SELECT DISTINCT subcategorie FROM standaard_waarden WHERE categorie=? ORDER BY subcategorie',[cat]).map(r=>r.subcategorie).filter(Boolean);
+  document.getElementById('inp-subcat').innerHTML =
+    '<option value="">Kies subcategorie…</option>' + subs.map(s=>`<option value="${esc(s)}">${s}</option>`).join('');
+}
+function refreshInvoer() {
+  if(!db)return;
+  const maand = document.getElementById('inp-maand').value;
+  const data  = rows('SELECT * FROM beleggingen WHERE maand_jaar=? ORDER BY categorie,subcategorie',[maand]);
+  const total = data.reduce((s,r)=>s+r.bedrag,0);
+  document.getElementById('entries-title').textContent = `Ingevoerd: ${fmtMaand(maand)}`;
+  document.getElementById('entries-total').textContent = fmtEur(total);
+  const list = document.getElementById('entries-list');
+  if (!data.length) { list.innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px 0">Nog geen invoer voor deze maand.</div>'; return; }
+  list.innerHTML = data.map(r=>`
+    <div class="entry-item">
+      <div class="info">
+        <div class="cat">${r.categorie}${r.subcategorie?' · '+r.subcategorie:''}</div>
+        <div class="detail">${r.detailbelegging||'—'}</div>
+      </div>
+      <div class="amount">${fmtEur(r.bedrag)}</div>
+      <button class="del-btn" onclick="deleteRecord(${r.id})">✕</button>
+    </div>`).join('');
+}
+async function addRecord() {
+  const maand=document.getElementById('inp-maand').value;
+  const cat=document.getElementById('inp-cat').value;
+  const sub=document.getElementById('inp-subcat').value;
+  const det=document.getElementById('inp-detail').value.trim();
+  const bed=parseFloat(document.getElementById('inp-bedrag').value);
+  if(!maand||!cat||isNaN(bed)||bed<=0){showToast('Vul minstens categorie en bedrag in','err');return;}
+  run('INSERT INTO beleggingen (maand_jaar,categorie,subcategorie,detailbelegging,bedrag) VALUES (?,?,?,?,?)',[maand,cat,sub||null,det||null,bed]);
+  document.getElementById('inp-detail').value='';
+  document.getElementById('inp-bedrag').value='';
+  refreshInvoer();
+  await save();
+}
+async function deleteRecord(id) {
+  if(!confirm('Record verwijderen?'))return;
+  run('DELETE FROM beleggingen WHERE id=?',[id]);
+  refreshInvoer(); await save();
+}
+
+/* ══════ INSTELLINGEN ══════ */
+function renderInstellingen() {
+  if(!db)return;
+  const data=rows('SELECT * FROM standaard_waarden ORDER BY categorie,subcategorie');
+  const el=document.getElementById('std-list');
+  if(!data.length){el.innerHTML='<div style="color:var(--muted);font-size:13px">Nog geen waarden.</div>';return;}
+  el.innerHTML=data.map(r=>`<div class="std-item"><div class="std-cat">${r.categorie}</div><div class="std-sub">${r.subcategorie||'—'}</div><button class="btn btn-danger btn-sm" onclick="deleteStandaard(${r.id})">✕</button></div>`).join('');
+}
+async function addStandaard() {
+  const cat=document.getElementById('std-cat-inp').value.trim();
+  const sub=document.getElementById('std-sub-inp').value.trim();
+  if(!cat){showToast('Categorie is verplicht','err');return;}
+  run('INSERT INTO standaard_waarden (categorie,subcategorie) VALUES (?,?)',[cat,sub||null]);
+  document.getElementById('std-cat-inp').value='';
+  document.getElementById('std-sub-inp').value='';
+  renderInstellingen(); await save();
+}
+async function deleteStandaard(id) {
+  run('DELETE FROM standaard_waarden WHERE id=?',[id]);
+  renderInstellingen(); await save();
+}
+
+/* ══════ OVERZICHT ══════ */
+function renderOverzicht() {
+  if(!db)return;
+  const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen ORDER BY maand_jaar').map(r=>r.maand_jaar);
+  const cats=rows('SELECT DISTINCT categorie FROM beleggingen ORDER BY categorie').map(r=>r.categorie);
+  if(!months.length){document.getElementById('overzicht-stats').innerHTML='<div class="card" style="grid-column:span 2;text-align:center;color:var(--muted)">Nog geen data</div>';return;}
+  const lM=months[months.length-1];const pM=months.length>1?months[months.length-2]:null;
+  const tL=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=?',[lM])[0]?.t||0;
+  const tP=pM?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=?',[pM])[0]?.t||0):null;
+  const ch=tP?((tL-tP)/tP*100):null;
+  document.getElementById('overzicht-stats').innerHTML=`
+    <div class="stat-card"><div class="stat-label">Totaal ${fmtMaand(lM)}</div><div class="stat-value">${fmtEur(tL)}</div></div>
+    <div class="stat-card"><div class="stat-label">Verandering</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
+  const C=['#c9a84c','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c','#34d399'];
+  destroyChart('chart-overzicht');
+  charts['overzicht']=new Chart(document.getElementById('chart-overzicht'),{type:'line',data:{labels:months.map(fmtMaand),datasets:cats.map((c,i)=>({label:c,data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[m,c])[0]?.t||0)),borderColor:C[i%C.length],backgroundColor:C[i%C.length]+'22',tension:.35,fill:true,pointRadius:3,borderWidth:2}))},options:cOpts()});
+  document.getElementById('cat-breakdown').innerHTML=cats.map(c=>{
+    const tot=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE categorie=?',[c])[0]?.t||0;
+    const lat=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[lM,c])[0]?.t||0;
+    return `<div class="card" style="cursor:pointer" onclick="navigate('categorie');selectCat('${esc(c)}')"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:11px;color:var(--gold);letter-spacing:1px;text-transform:uppercase">${c}</div><div style="font-size:13px;color:var(--muted);margin-top:3px">Totaal: ${fmtEur(tot)}</div></div><div style="font-family:var(--mono);font-size:17px">${fmtEur(lat)}</div></div></div>`;
+  }).join('');
+}
+
+/* ══════ CATEGORIE DETAIL ══════ */
+function renderCategorie() {
+  if(!db)return;
+  const cats=rows('SELECT DISTINCT categorie FROM beleggingen ORDER BY categorie').map(r=>r.categorie);
+  if(!cats.length){document.getElementById('cat-tabs').innerHTML='<div style="color:var(--muted);font-size:13px">Nog geen data</div>';return;}
+  if(!activeCategory||!cats.includes(activeCategory)) activeCategory=cats[0];
+  document.getElementById('cat-tabs').innerHTML=cats.map(c=>`<button class="tab ${c===activeCategory?'active':''}" onclick="selectCat('${esc(c)}')">${c}</button>`).join('');
+  buildCatDetail();
+}
+function selectCat(cat) {
+  activeCategory=cat;
+  if(currentScreen!=='categorie') navigate('categorie');
+  else renderCategorie();
+}
+function buildCatDetail() {
+  const cat=activeCategory;
+  const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen WHERE categorie=? ORDER BY maand_jaar',[cat]).map(r=>r.maand_jaar);
+  const subs=rows('SELECT DISTINCT subcategorie FROM beleggingen WHERE categorie=? ORDER BY subcategorie',[cat]).map(r=>r.subcategorie||'Overige');
+  const lM=months[months.length-1];const pM=months.length>1?months[months.length-2]:null;
+  const tL=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[lM,cat])[0]?.t||0;
+  const tP=pM?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[pM,cat])[0]?.t||0):null;
+  const ch=tP?((tL-tP)/tP*100):null;
+  document.getElementById('cat-stats').innerHTML=`<div class="stat-card"><div class="stat-label">Laatste maand</div><div class="stat-value">${fmtEur(tL)}</div></div><div class="stat-card"><div class="stat-label">Verandering</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
+  const C=['#c9a84c','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c'];
+  destroyChart('chart-categorie');
+  charts['categorie']=new Chart(document.getElementById('chart-categorie'),{type:'bar',data:{labels:months.map(fmtMaand),datasets:subs.map((s,i)=>({label:s,data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND (subcategorie=? OR (subcategorie IS NULL AND ?="Overige"))',[m,cat,s==='Overige'?null:s,s])[0]?.t||0)),backgroundColor:C[i%C.length]+'bb',borderColor:C[i%C.length],borderWidth:1}))},options:cOpts({stacked:true})});
+  let tbl='';
+  months.slice().reverse().forEach(m=>{
+    const ent=rows('SELECT subcategorie,detailbelegging,bedrag FROM beleggingen WHERE maand_jaar=? AND categorie=? ORDER BY bedrag DESC',[m,cat]);
+    const mt=ent.reduce((s,r)=>s+r.bedrag,0);
+    tbl+=`<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:12px;color:var(--gold)">${fmtMaand(m)}</span><span style="font-family:var(--mono);font-size:13px">${fmtEur(mt)}</span></div>`;
+    ent.forEach(r=>{tbl+=`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--muted)">${r.subcategorie||''} ${r.detailbelegging?'— '+r.detailbelegging:''}</span><span style="font-family:var(--mono)">${fmtEur(r.bedrag)}</span></div>`;});
+    tbl+='</div>';
+  });
+  document.getElementById('cat-table').innerHTML=tbl||'<div style="color:var(--muted)">Geen data</div>';
+}
+
+/* ══════ TOP 5 ══════ */
+function renderTop5() {
+  if(!db)return;
+  const det=rows('SELECT detailbelegging,SUM(bedrag) as sum_b,COUNT(*) as cnt FROM beleggingen WHERE detailbelegging IS NOT NULL AND detailbelegging!="" GROUP BY detailbelegging ORDER BY sum_b DESC');
+  if(!det.length){document.getElementById('top5-abs').innerHTML='<div style="color:var(--muted)">Nog geen data</div>';return;}
+  const t5=det.slice(0,5);const mA=t5[0]?.sum_b||1;
+  document.getElementById('top5-abs').innerHTML=t5.map((r,i)=>`<div class="top5-item"><div class="top5-rank">#${i+1}</div><div class="top5-bar-wrap"><div class="top5-name">${r.detailbelegging}</div><div class="top5-bar-bg"><div class="top5-bar" style="width:${r.sum_b/mA*100}%;background:var(--gold)"></div></div></div><div class="top5-val" style="color:var(--gold)">${fmtEur(r.sum_b)}</div></div>`).join('');
+  const wg=det.filter(r=>r.cnt>=2).map(r=>{
+    const v=rows('SELECT bedrag FROM beleggingen WHERE detailbelegging=? ORDER BY maand_jaar',[r.detailbelegging]);
+    const f=v[0]?.bedrag||0;const l=v[v.length-1]?.bedrag||0;
+    return{...r,pct:f>0?((l-f)/f*100):0};
+  }).filter(r=>r.pct!==0).sort((a,b)=>b.pct-a.pct).slice(0,5);
+  if(!wg.length){document.getElementById('top5-growth').innerHTML='<div style="color:var(--muted);font-size:13px">Minstens 2 maanden per belegging nodig.</div>';return;}
+  const mP=Math.max(...wg.map(r=>Math.abs(r.pct)),1);
+  document.getElementById('top5-growth').innerHTML=wg.map((r,i)=>`<div class="top5-item"><div class="top5-rank">#${i+1}</div><div class="top5-bar-wrap"><div class="top5-name">${r.detailbelegging}</div><div class="top5-bar-bg"><div class="top5-bar" style="width:${Math.abs(r.pct)/mP*100}%;background:${r.pct>=0?'var(--green)':'var(--red)'}"></div></div></div><div class="top5-val" style="color:${r.pct>=0?'var(--green)':'var(--red)'}">${r.pct>=0?'+':''}${r.pct.toFixed(1)}%</div></div>`).join('');
+}
+
+/* ══════ CHART OPTIONS ══════ */
+function cOpts({stacked=false}={}) {
+  return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom',labels:{color:'#6b7090',font:{family:'Outfit',size:11},boxWidth:10,padding:12}},
+    tooltip:{backgroundColor:'#1a1f30',borderColor:'#252b3d',borderWidth:1,titleColor:'#e2e5f0',bodyColor:'#6b7090'}},
+    scales:{x:{stacked,grid:{color:'#1e2333'},ticks:{color:'#6b7090',font:{family:'Outfit',size:11},maxRotation:45}},
+    y:{stacked,grid:{color:'#1e2333'},ticks:{color:'#6b7090',font:{family:'Outfit',size:11},callback:v=>'€'+v.toLocaleString('nl-BE')}}}};
+}
+function destroyChart(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
+
+/* ══════ UTIL ══════ */
+function fmtEur(n){return'€\u202f'+Number(n||0).toLocaleString('nl-BE',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function fmtMaand(ym){if(!ym)return'';const[y,m]=ym.split('-');return['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][parseInt(m)-1]+' '+y;}
+function esc(s){return(s||'').replace(/'/g,"&#39;").replace(/"/g,'&quot;');}
+let _tt;
+function showToast(msg,type=''){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.className='';t.offsetHeight;
+  t.classList.add('show');if(type)t.classList.add(type);
+  clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),2600);
+}
+</script>
+</body>
+</html>
