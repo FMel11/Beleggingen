@@ -718,8 +718,8 @@ async function deleteStandaard(id) {
 /* ══════ OVERZICHT ══════ */
 function renderOverzicht() {
   if(!db)return;
-  const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen ORDER BY maand_jaar').map(r=>r.maand_jaar);
-  const cats=rows('SELECT DISTINCT categorie FROM beleggingen ORDER BY categorie').map(r=>r.categorie);
+  const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen WHERE bedrag>0 ORDER BY maand_jaar').map(r=>r.maand_jaar);
+  const cats=rows('SELECT DISTINCT categorie FROM beleggingen WHERE bedrag>0 ORDER BY categorie').map(r=>r.categorie);
   if(!months.length){document.getElementById('overzicht-stats').innerHTML='<div class="card" style="grid-column:span 2;text-align:center;color:var(--muted)">Nog geen data</div>';return;}
   const lM=months[months.length-1];const pM=months.length>1?months[months.length-2]:null;
   const tL=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=?',[lM])[0]?.t||0;
@@ -727,15 +727,52 @@ function renderOverzicht() {
   const ch=tP?((tL-tP)/tP*100):null;
   document.getElementById('overzicht-stats').innerHTML=`
     <div class="stat-card"><div class="stat-label">Totaal ${fmtMaand(lM)}</div><div class="stat-value">${fmtEur(tL)}</div></div>
-    <div class="stat-card"><div class="stat-label">Verandering</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
+    <div class="stat-card"><div class="stat-label">Verandering vs vorige maand</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
+
+  // Grafiek: evolutie per categorie over alle maanden
   const C=['#c9a84c','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c','#34d399'];
   destroyChart('chart-overzicht');
-  charts['overzicht']=new Chart(document.getElementById('chart-overzicht'),{type:'line',data:{labels:months.map(fmtMaand),datasets:cats.map((c,i)=>({label:c,data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[m,c])[0]?.t||0)),borderColor:C[i%C.length],backgroundColor:C[i%C.length]+'22',tension:.35,fill:true,pointRadius:3,borderWidth:2}))},options:cOpts()});
-  document.getElementById('cat-breakdown').innerHTML=cats.map(c=>{
-    const tot=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE categorie=?',[c])[0]?.t||0;
-    const lat=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[lM,c])[0]?.t||0;
-    return `<div class="card" style="cursor:pointer" onclick="navigate('categorie');selectCat('${esc(c)}')"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:11px;color:var(--gold);letter-spacing:1px;text-transform:uppercase">${c}</div><div style="font-size:13px;color:var(--muted);margin-top:3px">Totaal: ${fmtEur(tot)}</div></div><div style="font-family:var(--mono);font-size:17px">${fmtEur(lat)}</div></div></div>`;
-  }).join('');
+  charts['overzicht']=new Chart(document.getElementById('chart-overzicht'),{
+    type:'line',
+    data:{labels:months.map(fmtMaand),datasets:cats.map((c,i)=>({
+      label:c,
+      data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0',[m,c])[0]?.t||0)),
+      borderColor:C[i%C.length],backgroundColor:C[i%C.length]+'22',tension:.35,fill:true,pointRadius:4,borderWidth:2
+    }))},
+    options:cOpts()
+  });
+
+  // Maand-per-maand tabel
+  let html='';
+  months.slice().reverse().forEach(m=>{
+    const mTot=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND bedrag>0',[m])[0]?.t||0;
+    const prev=months[months.indexOf(m)-1];
+    const pTot=prev?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND bedrag>0',[prev])[0]?.t||0):null;
+    const mCh=pTot?((mTot-pTot)/pTot*100):null;
+    html+=`<div class="card" style="cursor:pointer" onclick="navigate('categorie')">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:600;color:var(--gold)">${fmtMaand(m)}</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${mCh!==null?`<span style="font-size:12px;color:${mCh>=0?'var(--green)':'var(--red)'}">${mCh>=0?'+':''}${mCh.toFixed(1)}%</span>`:''}
+          <span style="font-family:var(--mono);font-size:16px">${fmtEur(mTot)}</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">`;
+    cats.forEach(c=>{
+      const cTot=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0',[m,c])[0]?.t||0;
+      if(!cTot) return;
+      const pct=mTot>0?(cTot/mTot*100):0;
+      html+=`<div style="display:flex;align-items:center;gap:8px">
+        <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:.6px;width:120px;flex-shrink:0">${c}</div>
+        <div style="flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:var(--gold);border-radius:3px"></div>
+        </div>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--muted);width:90px;text-align:right">${fmtEur(cTot)}</div>
+      </div>`;
+    });
+    html+='</div></div>';
+  });
+  document.getElementById('cat-breakdown').innerHTML=html||'<div style="color:var(--muted);font-size:13px">Nog geen data</div>';
 }
 
 /* ══════ CATEGORIE DETAIL ══════ */
@@ -777,46 +814,72 @@ function selectCat(cat) {
 }
 function buildCatDetail() {
   const cat = activeCategory;
-  console.log('[buildCatDetail] cat =', cat); // debug
+  console.log('[buildCatDetail] cat =', cat);
 
-  const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen WHERE categorie=? ORDER BY maand_jaar',[cat]).map(r=>r.maand_jaar);
+  const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen WHERE categorie=? AND bedrag>0 ORDER BY maand_jaar',[cat]).map(r=>r.maand_jaar);
   const subs=rows('SELECT DISTINCT subcategorie FROM beleggingen WHERE categorie=? AND bedrag>0 ORDER BY subcategorie',[cat]).map(r=>r.subcategorie||'Overige');
-  const lM=months[months.length-1];const pM=months.length>1?months[months.length-2]:null;
-  const tL=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[lM,cat])[0]?.t||0;
-  const tP=pM?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[pM,cat])[0]?.t||0):null;
-  const ch=tP?((tL-tP)/tP*100):null;
-  document.getElementById('cat-stats').innerHTML=`<div class="stat-card"><div class="stat-label">Laatste maand</div><div class="stat-value">${fmtEur(tL)}</div></div><div class="stat-card"><div class="stat-label">Verandering</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
 
-  // Vervang canvas volledig om Chart.js cache te vermijden
+  if(!months.length){
+    document.getElementById('cat-stats').innerHTML='<div class="stat-card" style="grid-column:span 2;text-align:center;color:var(--muted);font-size:13px">Nog geen data voor deze categorie.</div>';
+    document.getElementById('cat-table').innerHTML='';
+    destroyChart('chart-categorie');
+    return;
+  }
+
+  const lM=months[months.length-1];
+  const pM=months.length>1?months[months.length-2]:null;
+  const tL=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0',[lM,cat])[0]?.t||0;
+  const tP=pM?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0',[pM,cat])[0]?.t||0):null;
+  const ch=tP?((tL-tP)/tP*100):null;
+  document.getElementById('cat-stats').innerHTML=`
+    <div class="stat-card"><div class="stat-label">Laatste maand (${fmtMaand(lM)})</div><div class="stat-value">${fmtEur(tL)}</div></div>
+    <div class="stat-card"><div class="stat-label">Verandering</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
+
+  // Grafiek
   const C=['#c9a84c','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c'];
   if(charts['categorie']){ charts['categorie'].destroy(); delete charts['categorie']; }
-  const wrap = document.getElementById('chart-categorie').parentNode;
-  wrap.innerHTML = '<canvas id="chart-categorie"></canvas>';
-
-  if(months.length && subs.length) {
+  const wrap=document.getElementById('chart-categorie').parentNode;
+  wrap.innerHTML='<canvas id="chart-categorie"></canvas>';
+  if(subs.length){
     charts['categorie']=new Chart(document.getElementById('chart-categorie'),{
       type:'bar',
-      data:{
-        labels:months.map(fmtMaand),
-        datasets:subs.map((s,i)=>({
-          label:s,
-          data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND subcategorie=?',[m,cat,s])[0]?.t||0)),
-          backgroundColor:C[i%C.length]+'bb',
-          borderColor:C[i%C.length],
-          borderWidth:1
-        }))
-      },
+      data:{labels:months.map(fmtMaand),datasets:subs.map((s,i)=>({
+        label:s,
+        data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND subcategorie=?',[m,cat,s])[0]?.t||0)),
+        backgroundColor:C[i%C.length]+'bb',borderColor:C[i%C.length],borderWidth:1
+      }))},
       options:cOpts({stacked:true})
     });
   }
 
+  // Tabel: alle maanden, meest recente eerst
   let tbl='';
   months.slice().reverse().forEach(m=>{
-    const ent=rows('SELECT subcategorie,detailbelegging,bedrag FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0 ORDER BY bedrag DESC',[m,cat]);
+    const ent=rows('SELECT subcategorie,detailbelegging,bedrag FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0 ORDER BY subcategorie,bedrag DESC',[m,cat]);
     if(!ent.length) return;
     const mt=ent.reduce((s,r)=>s+r.bedrag,0);
-    tbl+=`<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:12px;color:var(--gold)">${fmtMaand(m)}</span><span style="font-family:var(--mono);font-size:13px">${fmtEur(mt)}</span></div>`;
-    ent.forEach(r=>{tbl+=`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--muted)">${r.subcategorie||''} ${r.detailbelegging?'— '+r.detailbelegging:''}</span><span style="font-family:var(--mono)">${fmtEur(r.bedrag)}</span></div>`;});
+    const prev=months[months.indexOf(m)-1];
+    const pTot=prev?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0',[prev,cat])[0]?.t||0):null;
+    const mCh=pTot?((mt-pTot)/pTot*100):null;
+    tbl+=`<div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+        <span style="font-size:13px;font-weight:600;color:var(--gold)">${fmtMaand(m)}</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${mCh!==null?`<span style="font-size:12px;color:${mCh>=0?'var(--green)':'var(--red)'}">${mCh>=0?'+':''}${mCh.toFixed(1)}%</span>`:''}
+          <span style="font-family:var(--mono);font-size:13px">${fmtEur(mt)}</span>
+        </div>
+      </div>`;
+    let prevSub=null;
+    ent.forEach(r=>{
+      if(r.subcategorie!==prevSub){
+        tbl+=`<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;padding:4px 0 2px">${r.subcategorie||'Overige'}</div>`;
+        prevSub=r.subcategorie;
+      }
+      tbl+=`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <span style="color:var(--text);padding-left:8px">${r.detailbelegging||'—'}</span>
+        <span style="font-family:var(--mono)">${fmtEur(r.bedrag)}</span>
+      </div>`;
+    });
     tbl+='</div>';
   });
   document.getElementById('cat-table').innerHTML=tbl||'<div style="color:var(--muted);font-size:13px">Geen data voor deze categorie.</div>';
@@ -825,18 +888,55 @@ function buildCatDetail() {
 /* ══════ TOP 5 ══════ */
 function renderTop5() {
   if(!db)return;
-  const det=rows('SELECT detailbelegging,SUM(bedrag) as sum_b,COUNT(*) as cnt FROM beleggingen WHERE detailbelegging IS NOT NULL AND detailbelegging!="" GROUP BY detailbelegging ORDER BY sum_b DESC');
-  if(!det.length){document.getElementById('top5-abs').innerHTML='<div style="color:var(--muted)">Nog geen data</div>';return;}
-  const t5=det.slice(0,5);const mA=t5[0]?.sum_b||1;
-  document.getElementById('top5-abs').innerHTML=t5.map((r,i)=>`<div class="top5-item"><div class="top5-rank">#${i+1}</div><div class="top5-bar-wrap"><div class="top5-name">${r.detailbelegging}</div><div class="top5-bar-bg"><div class="top5-bar" style="width:${r.sum_b/mA*100}%;background:var(--gold)"></div></div></div><div class="top5-val" style="color:var(--gold)">${fmtEur(r.sum_b)}</div></div>`).join('');
-  const wg=det.filter(r=>r.cnt>=2).map(r=>{
-    const v=rows('SELECT bedrag FROM beleggingen WHERE detailbelegging=? ORDER BY maand_jaar',[r.detailbelegging]);
-    const f=v[0]?.bedrag||0;const l=v[v.length-1]?.bedrag||0;
-    return{...r,pct:f>0?((l-f)/f*100):0};
-  }).filter(r=>r.pct!==0).sort((a,b)=>b.pct-a.pct).slice(0,5);
-  if(!wg.length){document.getElementById('top5-growth').innerHTML='<div style="color:var(--muted);font-size:13px">Minstens 2 maanden per belegging nodig.</div>';return;}
-  const mP=Math.max(...wg.map(r=>Math.abs(r.pct)),1);
-  document.getElementById('top5-growth').innerHTML=wg.map((r,i)=>`<div class="top5-item"><div class="top5-rank">#${i+1}</div><div class="top5-bar-wrap"><div class="top5-name">${r.detailbelegging}</div><div class="top5-bar-bg"><div class="top5-bar" style="width:${Math.abs(r.pct)/mP*100}%;background:${r.pct>=0?'var(--green)':'var(--red)'}"></div></div></div><div class="top5-val" style="color:${r.pct>=0?'var(--green)':'var(--red)'}">${r.pct>=0?'+':''}${r.pct.toFixed(1)}%</div></div>`).join('');
+
+  // Laatste maand met data
+  const lastMonthRes=rows('SELECT maand_jaar FROM beleggingen WHERE bedrag>0 ORDER BY maand_jaar DESC LIMIT 1');
+  if(!lastMonthRes.length){
+    document.getElementById('top5-abs').innerHTML='<div style="color:var(--muted)">Nog geen data</div>';
+    document.getElementById('top5-growth').innerHTML='<div style="color:var(--muted)">Nog geen data</div>';
+    return;
+  }
+  const lastM=lastMonthRes[0].maand_jaar;
+  const prevMonthRes=rows('SELECT DISTINCT maand_jaar FROM beleggingen WHERE bedrag>0 AND maand_jaar<? ORDER BY maand_jaar DESC LIMIT 1',[lastM]);
+  const prevM=prevMonthRes.length?prevMonthRes[0].maand_jaar:null;
+
+  // Top 5 absolute waarde — op basis van laatste maand
+  const absData=rows('SELECT detailbelegging, SUM(bedrag) as tot FROM beleggingen WHERE maand_jaar=? AND bedrag>0 AND detailbelegging IS NOT NULL AND detailbelegging!="" GROUP BY detailbelegging ORDER BY tot DESC LIMIT 5',[lastM]);
+  if(!absData.length){
+    document.getElementById('top5-abs').innerHTML='<div style="color:var(--muted);font-size:13px">Geen data voor '+fmtMaand(lastM)+'</div>';
+  } else {
+    const maxA=absData[0].tot||1;
+    document.getElementById('top5-abs').innerHTML=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Maand: ${fmtMaand(lastM)}</div>`+
+      absData.map((r,i)=>`<div class="top5-item"><div class="top5-rank">#${i+1}</div>
+        <div class="top5-bar-wrap"><div class="top5-name">${r.detailbelegging}</div>
+        <div class="top5-bar-bg"><div class="top5-bar" style="width:${r.tot/maxA*100}%;background:var(--gold)"></div></div></div>
+        <div class="top5-val" style="color:var(--gold)">${fmtEur(r.tot)}</div></div>`).join('');
+  }
+
+  // Top 5 groei — vergelijking laatste maand vs vorige maand
+  if(!prevM){
+    document.getElementById('top5-growth').innerHTML='<div style="color:var(--muted);font-size:13px">Minstens 2 maanden met data nodig.</div>';
+    return;
+  }
+  const allDets=rows('SELECT DISTINCT detailbelegging FROM beleggingen WHERE bedrag>0 AND detailbelegging IS NOT NULL AND detailbelegging!=""').map(r=>r.detailbelegging);
+  const growth=allDets.map(det=>{
+    const cur =rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND detailbelegging=? AND bedrag>0',[lastM,det])[0]?.t||0;
+    const prev=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND detailbelegging=? AND bedrag>0',[prevM,det])[0]?.t||0;
+    const pct=prev>0?((cur-prev)/prev*100):null;
+    return {det,cur,prev,pct};
+  }).filter(r=>r.pct!==null&&r.pct!==0).sort((a,b)=>b.pct-a.pct).slice(0,5);
+
+  if(!growth.length){
+    document.getElementById('top5-growth').innerHTML='<div style="color:var(--muted);font-size:13px">Geen veranderingen tussen '+fmtMaand(prevM)+' en '+fmtMaand(lastM)+'.</div>';
+    return;
+  }
+  const maxP=Math.max(...growth.map(r=>Math.abs(r.pct)),1);
+  document.getElementById('top5-growth').innerHTML=
+    `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${fmtMaand(prevM)} → ${fmtMaand(lastM)}</div>`+
+    growth.map((r,i)=>`<div class="top5-item"><div class="top5-rank">#${i+1}</div>
+      <div class="top5-bar-wrap"><div class="top5-name">${r.det}</div>
+      <div class="top5-bar-bg"><div class="top5-bar" style="width:${Math.abs(r.pct)/maxP*100}%;background:${r.pct>=0?'var(--green)':'var(--red)'}"></div></div></div>
+      <div class="top5-val" style="color:${r.pct>=0?'var(--green)':'var(--red)'}">${r.pct>=0?'+':''}${r.pct.toFixed(1)}%</div></div>`).join('');
 }
 
 /* ══════ CHART OPTIONS ══════ */
