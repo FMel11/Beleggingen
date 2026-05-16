@@ -143,6 +143,27 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 #toast.ok   { border-color: var(--green);  color: var(--green);  }
 #toast.err  { border-color: var(--red);    color: var(--red);    }
 #toast.warn { border-color: var(--orange); color: var(--orange); }
+
+/* INVOER TABEL */
+.inv-table { width: 100%; border-collapse: collapse; min-width: 480px; }
+.inv-table thead tr { border-bottom: 1px solid var(--border); }
+.inv-table th { padding: 10px 12px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; font-weight: 500; text-align: left; white-space: nowrap; background: var(--surface); }
+.inv-table tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+.inv-table tbody tr:last-child { border-bottom: none; }
+.inv-table tbody tr:hover { background: rgba(255,255,255,.02); }
+.inv-table td { padding: 9px 12px; font-size: 13px; vertical-align: middle; }
+.inv-table td.td-cat { color: var(--gold); font-size: 12px; font-weight: 500; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.inv-table td.td-sub { color: var(--muted); font-size: 12px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-table td.td-det { color: var(--text); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-table td.td-amt { font-family: var(--mono); font-size: 13px; white-space: nowrap; text-align: right; }
+.inv-table td.td-del { text-align: center; width: 36px; padding: 4px; }
+.inv-input-row td { padding: 6px 8px; background: rgba(201,168,76,.04); border-top: 2px solid var(--gold); }
+.inv-input-row select, .inv-input-row input { padding: 8px 10px; font-size: 13px; border-radius: 7px; width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--font); appearance: none; -webkit-appearance: none; outline: none; min-width: 80px; }
+.inv-input-row select:focus, .inv-input-row input:focus { border-color: var(--gold); }
+.inv-input-row select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7090' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px; }
+.add-row-btn { width: 32px; height: 32px; border-radius: 7px; border: none; background: var(--gold); color: #0b0e17; font-size: 20px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .15s; }
+.add-row-btn:active { transform: scale(.93); }
+.inv-footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--surface); }
 </style>
 </head>
 <body>
@@ -173,23 +194,27 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
       <div class="month-bar">
         <input type="month" id="inp-maand" onchange="refreshInvoer()">
       </div>
-      <div class="card">
-        <div class="card-title">Nieuwe belegging</div>
-        <div class="form-group"><label>Categorie</label>
-          <select id="inp-cat" onchange="fillSubcat()"><option value="">Kies categorie…</option></select></div>
-        <div class="form-group"><label>Subcategorie</label>
-          <select id="inp-subcat"><option value="">Kies subcategorie…</option></select></div>
-        <div class="form-group"><label>Detailbelegging</label>
-          <input type="text" id="inp-detail" placeholder="bv. IWDA ETF"></div>
-        <div class="form-group"><label>Bedrag (€)</label>
-          <input type="number" id="inp-bedrag" placeholder="0.00" step="0.01" min="0"></div>
-        <button class="btn btn-primary" onclick="addRecord()">+ Toevoegen</button>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto">
+          <table class="inv-table">
+            <thead><tr>
+              <th>Categorie</th><th>Subcategorie</th><th>Detail</th><th>Bedrag</th><th></th>
+            </tr></thead>
+            <tbody id="entries-tbody"></tbody>
+            <tfoot><tr class="inv-input-row">
+              <td><select id="inp-cat" onchange="fillSubcat()"><option value="">Categorie…</option></select></td>
+              <td><select id="inp-subcat"><option value="">Subcategorie…</option></select></td>
+              <td><input type="text" id="inp-detail" placeholder="Detail…"></td>
+              <td><input type="number" id="inp-bedrag" placeholder="0.00" step="0.01" min="0"></td>
+              <td><button class="add-row-btn" onclick="addRecord()">＋</button></td>
+            </tr></tfoot>
+          </table>
+        </div>
+        <div class="inv-footer">
+          <span id="entries-title" style="color:var(--muted);font-size:12px"></span>
+          <span id="entries-total" style="font-family:var(--mono);color:var(--gold);font-size:14px;font-weight:600"></span>
+        </div>
       </div>
-      <div class="section-hdr">
-        <h3 id="entries-title">Ingevoerd deze maand</h3>
-        <span id="entries-total" style="font-family:var(--mono);color:var(--gold);font-size:14px"></span>
-      </div>
-      <div id="entries-list" class="entry-list"></div>
     </div>
 
     <!-- INSTELLINGEN -->
@@ -292,6 +317,8 @@ window.addEventListener('DOMContentLoaded', async () => {
    WINDOWS — automatische opslag via File System Access API
 ══════════════════════════════════════════════════════ */
 async function initWindows() {
+  db = new SQL.Database();
+  initTables();
   setSt('idle', 'Windows — automatische opslag');
   document.getElementById('status-actions').innerHTML =
     `<button class="btn btn-outline btn-sm" onclick="pickFile()">📁 Koppel bestand</button>`;
@@ -546,19 +573,21 @@ function refreshInvoer() {
   const maand = document.getElementById('inp-maand').value;
   const data  = rows('SELECT * FROM beleggingen WHERE maand_jaar=? ORDER BY categorie,subcategorie',[maand]);
   const total = data.reduce((s,r)=>s+r.bedrag,0);
-  document.getElementById('entries-title').textContent = `Ingevoerd: ${fmtMaand(maand)}`;
+  document.getElementById('entries-title').textContent = `${fmtMaand(maand)} — ${data.length} rij${data.length!==1?'en':''}`;
   document.getElementById('entries-total').textContent = fmtEur(total);
-  const list = document.getElementById('entries-list');
-  if (!data.length) { list.innerHTML='<div style="color:var(--muted);font-size:13px;padding:8px 0">Nog geen invoer voor deze maand.</div>'; return; }
-  list.innerHTML = data.map(r=>`
-    <div class="entry-item">
-      <div class="info">
-        <div class="cat">${r.categorie}${r.subcategorie?' · '+r.subcategorie:''}</div>
-        <div class="detail">${r.detailbelegging||'—'}</div>
-      </div>
-      <div class="amount">${fmtEur(r.bedrag)}</div>
-      <button class="del-btn" onclick="deleteRecord(${r.id})">✕</button>
-    </div>`).join('');
+  const tbody = document.getElementById('entries-tbody');
+  if (!data.length) {
+    tbody.innerHTML=`<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Nog geen invoer voor deze maand.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = data.map(r=>`
+    <tr>
+      <td class="td-cat" title="${esc(r.categorie)}">${r.categorie}</td>
+      <td class="td-sub" title="${esc(r.subcategorie||'')}">${r.subcategorie||'—'}</td>
+      <td class="td-det" title="${esc(r.detailbelegging||'')}">${r.detailbelegging||'—'}</td>
+      <td class="td-amt">${fmtEur(r.bedrag)}</td>
+      <td class="td-del"><button class="del-btn" onclick="deleteRecord(${r.id})">✕</button></td>
+    </tr>`).join('');
 }
 async function addRecord() {
   const maand=document.getElementById('inp-maand').value;
