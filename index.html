@@ -302,6 +302,7 @@ let hasChanges  = false;  // iPhone: niet-geëxporteerde wijzigingen
 let currentScreen  = 'invoer';
 let activeCategory = null;
 let charts = {};
+let saveCount = 0;        // Teller voor automatische backup
 
 /* ══════ INIT ══════ */
 window.addEventListener('DOMContentLoaded', async () => {
@@ -367,7 +368,8 @@ async function loadFromHandle() {
   initTables();
   setSt('ok', `Verbonden: ${fileHandle.name}`);
   document.getElementById('status-actions').innerHTML =
-    `<button class="btn btn-outline btn-sm" onclick="pickFile()">📁 Wissel</button>`;
+    `<button class="btn btn-outline btn-sm" onclick="backupDB()">💾 Backup</button>
+     <button class="btn btn-outline btn-sm" onclick="pickFile()">📁 Wissel</button>`;
   afterDBLoad();
 }
 
@@ -377,8 +379,29 @@ async function autoSave() {
     const w = await fileHandle.createWritable();
     await w.write(db.export());
     await w.close();
-    showToast('Automatisch opgeslagen ✓', 'ok');
+    saveCount++;
+    if (saveCount % 5 === 0) {
+      await backupDB();
+    } else {
+      showToast('Automatisch opgeslagen ✓', 'ok');
+    }
   } catch { showToast('Opslaan mislukt', 'err'); }
+}
+
+async function backupDB() {
+  const now    = new Date();
+  const stamp  = now.getFullYear() + '-'
+    + String(now.getMonth()+1).padStart(2,'0') + '-'
+    + String(now.getDate()).padStart(2,'0') + '_'
+    + String(now.getHours()).padStart(2,'0')
+    + String(now.getMinutes()).padStart(2,'0');
+  const fname  = `beleggingen_backup_${stamp}.db`;
+  const blob   = new Blob([db.export()], { type: 'application/octet-stream' });
+  const url    = URL.createObjectURL(blob);
+  const a      = Object.assign(document.createElement('a'), { href: url, download: fname });
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`Backup: ${fname}`, 'ok');
 }
 
 /* ══════════════════════════════════════════════════════
@@ -462,7 +485,12 @@ function initTables() {
     subcategorie TEXT, detailbelegging TEXT, bedrag REAL NOT NULL)`);
   db.run(`CREATE TABLE IF NOT EXISTS standaard_waarden (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    categorie TEXT NOT NULL, subcategorie TEXT)`);
+    categorie TEXT NOT NULL, subcategorie TEXT, detailbelegging TEXT)`);
+
+  // Migratie: voeg detailbelegging toe aan standaard_waarden als die kolom nog niet bestaat
+  try {
+    db.run(`ALTER TABLE standaard_waarden ADD COLUMN detailbelegging TEXT`);
+  } catch(e) { /* kolom bestaat al — ok */ }
 }
 
 async function save() {
@@ -479,7 +507,6 @@ async function save() {
 function afterDBLoad() {
   const inp = document.getElementById('inp-maand');
   if (!inp.value) inp.value = new Date().toISOString().slice(0,7);
-  fillCatDropdown();
   refreshInvoer();
 }
 
@@ -749,26 +776,50 @@ function selectCat(cat) {
   buildCatDetail();
 }
 function buildCatDetail() {
-  const cat=activeCategory;
+  const cat = activeCategory;
+  console.log('[buildCatDetail] cat =', cat); // debug
+
   const months=rows('SELECT DISTINCT maand_jaar FROM beleggingen WHERE categorie=? ORDER BY maand_jaar',[cat]).map(r=>r.maand_jaar);
-  const subs=rows('SELECT DISTINCT subcategorie FROM beleggingen WHERE categorie=? ORDER BY subcategorie',[cat]).map(r=>r.subcategorie||'Overige');
+  const subs=rows('SELECT DISTINCT subcategorie FROM beleggingen WHERE categorie=? AND bedrag>0 ORDER BY subcategorie',[cat]).map(r=>r.subcategorie||'Overige');
   const lM=months[months.length-1];const pM=months.length>1?months[months.length-2]:null;
   const tL=rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[lM,cat])[0]?.t||0;
   const tP=pM?(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=?',[pM,cat])[0]?.t||0):null;
   const ch=tP?((tL-tP)/tP*100):null;
   document.getElementById('cat-stats').innerHTML=`<div class="stat-card"><div class="stat-label">Laatste maand</div><div class="stat-value">${fmtEur(tL)}</div></div><div class="stat-card"><div class="stat-label">Verandering</div><div class="stat-value ${ch===null?'':ch>=0?'up':'down'}">${ch===null?'—':(ch>=0?'+':'')+ch.toFixed(1)+'%'}</div></div>`;
+
+  // Vervang canvas volledig om Chart.js cache te vermijden
   const C=['#c9a84c','#60a5fa','#4ade80','#f87171','#a78bfa','#fb923c'];
-  destroyChart('chart-categorie');
-  charts['categorie']=new Chart(document.getElementById('chart-categorie'),{type:'bar',data:{labels:months.map(fmtMaand),datasets:subs.map((s,i)=>({label:s,data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND (subcategorie=? OR (subcategorie IS NULL AND ?="Overige"))',[m,cat,s==='Overige'?null:s,s])[0]?.t||0)),backgroundColor:C[i%C.length]+'bb',borderColor:C[i%C.length],borderWidth:1}))},options:cOpts({stacked:true})});
+  if(charts['categorie']){ charts['categorie'].destroy(); delete charts['categorie']; }
+  const wrap = document.getElementById('chart-categorie').parentNode;
+  wrap.innerHTML = '<canvas id="chart-categorie"></canvas>';
+
+  if(months.length && subs.length) {
+    charts['categorie']=new Chart(document.getElementById('chart-categorie'),{
+      type:'bar',
+      data:{
+        labels:months.map(fmtMaand),
+        datasets:subs.map((s,i)=>({
+          label:s,
+          data:months.map(m=>(rows('SELECT SUM(bedrag) as t FROM beleggingen WHERE maand_jaar=? AND categorie=? AND subcategorie=?',[m,cat,s])[0]?.t||0)),
+          backgroundColor:C[i%C.length]+'bb',
+          borderColor:C[i%C.length],
+          borderWidth:1
+        }))
+      },
+      options:cOpts({stacked:true})
+    });
+  }
+
   let tbl='';
   months.slice().reverse().forEach(m=>{
-    const ent=rows('SELECT subcategorie,detailbelegging,bedrag FROM beleggingen WHERE maand_jaar=? AND categorie=? ORDER BY bedrag DESC',[m,cat]);
+    const ent=rows('SELECT subcategorie,detailbelegging,bedrag FROM beleggingen WHERE maand_jaar=? AND categorie=? AND bedrag>0 ORDER BY bedrag DESC',[m,cat]);
+    if(!ent.length) return;
     const mt=ent.reduce((s,r)=>s+r.bedrag,0);
     tbl+=`<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:12px;color:var(--gold)">${fmtMaand(m)}</span><span style="font-family:var(--mono);font-size:13px">${fmtEur(mt)}</span></div>`;
     ent.forEach(r=>{tbl+=`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--muted)">${r.subcategorie||''} ${r.detailbelegging?'— '+r.detailbelegging:''}</span><span style="font-family:var(--mono)">${fmtEur(r.bedrag)}</span></div>`;});
     tbl+='</div>';
   });
-  document.getElementById('cat-table').innerHTML=tbl||'<div style="color:var(--muted)">Geen data</div>';
+  document.getElementById('cat-table').innerHTML=tbl||'<div style="color:var(--muted);font-size:13px">Geen data voor deze categorie.</div>';
 }
 
 /* ══════ TOP 5 ══════ */
