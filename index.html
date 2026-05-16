@@ -164,10 +164,10 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 .add-row-btn { width: 32px; height: 32px; border-radius: 7px; border: none; background: var(--gold); color: #0b0e17; font-size: 20px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .15s; }
 .add-row-btn:active { transform: scale(.93); }
 .inv-footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--surface); }
-.cell-inp { width: 100%; padding: 6px 8px; font-size: 13px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--font); outline: none; min-width: 80px; }
-.cell-inp:focus { border-color: var(--gold); background: rgba(201,168,76,.04); }
-.cell-amt { font-family: var(--mono); text-align: right; min-width: 90px; }
-.cell-amt:not(:placeholder-shown) { color: var(--green); }
+.cell-inp { width: 100%; padding: 8px 10px; font-size: 13px; border-radius: 6px; background: rgba(201,168,76,.05); border: 1px solid rgba(201,168,76,.4); color: var(--text); font-family: var(--font); outline: none; min-width: 100px; cursor: text; }
+.cell-inp:focus { border-color: var(--gold2); background: rgba(201,168,76,.1); box-shadow: 0 0 0 2px rgba(201,168,76,.15); }
+.cell-inp:hover { border-color: var(--gold); }
+.cell-amt { font-family: var(--mono); text-align: right; min-width: 100px; }
 </style>
 </head>
 <body>
@@ -203,7 +203,7 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
         <div style="overflow-x:auto">
           <table class="inv-table">
             <thead><tr>
-              <th>Categorie</th><th>Subcategorie</th><th>Detail</th><th style="text-align:right">Bedrag €</th>
+              <th>Detail</th><th style="text-align:right;width:130px">Bedrag €</th>
             </tr></thead>
             <tbody id="entries-tbody"></tbody>
           </table>
@@ -218,11 +218,12 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
     <!-- INSTELLINGEN -->
     <div id="screen-instellingen" class="screen">
       <div class="page-title">Instellingen</div>
-      <div class="page-sub">Standaardwaarden voor categorie &amp; subcategorie</div>
+      <div class="page-sub">Standaardwaarden voor categorie, subcategorie &amp; detail</div>
       <div class="card">
-        <div class="card-title">Nieuw paar toevoegen</div>
-        <div class="form-group"><label>Categorie</label><input type="text" id="std-cat-inp" placeholder="bv. Aandelen"></div>
-        <div class="form-group"><label>Subcategorie</label><input type="text" id="std-sub-inp" placeholder="bv. ETF's"></div>
+        <div class="card-title">Nieuw item toevoegen</div>
+        <div class="form-group"><label>Categorie</label><input type="text" id="std-cat-inp" placeholder="bv. LIQUIDE"></div>
+        <div class="form-group"><label>Subcategorie</label><input type="text" id="std-sub-inp" placeholder="bv. LIQUIDE"></div>
+        <div class="form-group"><label>Detail</label><input type="text" id="std-det-inp" placeholder="bv. ING"></div>
         <button class="btn btn-primary" onclick="addStandaard()">+ Toevoegen</button>
       </div>
       <div class="card"><div class="card-title">Bestaande waarden</div><div id="std-list"></div></div>
@@ -557,57 +558,54 @@ function renderInvoer() { if(!db)return; refreshInvoer(); }
 function refreshInvoer() {
   if(!db)return;
   const maand   = document.getElementById('inp-maand').value;
-  const stdRows = rows('SELECT * FROM standaard_waarden ORDER BY categorie, subcategorie');
+  const stdRows = rows('SELECT * FROM standaard_waarden ORDER BY categorie, subcategorie, detailbelegging');
   const existing= rows('SELECT * FROM beleggingen WHERE maand_jaar=?',[maand]);
 
-  // Bouw lookup: "cat||sub" -> record
+  // Lookup: "cat||sub||det" -> bedrag
   const lookup = {};
   existing.forEach(r => {
-    const key = (r.categorie||'') + '||' + (r.subcategorie||'');
-    lookup[key] = r;
+    const key = (r.categorie||'')+'||'+(r.subcategorie||'')+'||'+(r.detailbelegging||'');
+    lookup[key] = r.bedrag;
   });
 
-  const total = existing.reduce((s,r)=>s+r.bedrag,0);
-  document.getElementById('entries-title').textContent = `${fmtMaand(maand)}`;
+  const total = existing.reduce((s,r)=>s+(r.bedrag||0),0);
+  document.getElementById('entries-title').textContent = fmtMaand(maand);
   document.getElementById('entries-total').textContent = fmtEur(total);
 
   if (!stdRows.length) {
     document.getElementById('entries-tbody').innerHTML =
-      `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
-        Voeg eerst standaardwaarden toe via ⚙️ Instellingen.
-      </td></tr>`;
+      `<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
+        Voeg eerst standaardwaarden toe via ⚙️ Instellingen.</td></tr>`;
     return;
   }
 
-  // Groepeer per categorie
-  const grouped = {};
-  stdRows.forEach(r => {
-    if (!grouped[r.categorie]) grouped[r.categorie] = [];
-    grouped[r.categorie].push(r);
-  });
-
   let html = '';
   let prevCat = null;
+  let prevSub = null;
   stdRows.forEach(r => {
-    const key     = (r.categorie||'') + '||' + (r.subcategorie||'');
-    const rec     = lookup[key];
-    const bedrag  = rec ? rec.bedrag : '';
-    const detail  = rec ? (rec.detailbelegging||'') : '';
-    const rowId   = `row-${r.id}`;
+    const key    = (r.categorie||'')+'||'+(r.subcategorie||'')+'||'+(r.detailbelegging||'');
+    const bedrag = lookup[key] !== undefined ? lookup[key] : '';
 
-    // Categorie-scheidingsrij
     if (r.categorie !== prevCat) {
       html += `<tr class="cat-group-row">
-        <td colspan="4" style="padding:8px 12px;background:rgba(201,168,76,.06);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);font-weight:600">${r.categorie}</td>
+        <td colspan="3" style="padding:7px 12px;background:rgba(201,168,76,.08);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);font-weight:600;border-top:1px solid var(--border)">${r.categorie}</td>
       </tr>`;
       prevCat = r.categorie;
+      prevSub = null;
+    }
+    if (r.subcategorie !== prevSub) {
+      html += `<tr>
+        <td colspan="3" style="padding:5px 12px 3px 20px;font-size:11px;color:var(--muted);font-style:italic;background:rgba(255,255,255,.01)">${r.subcategorie||''}</td>
+      </tr>`;
+      prevSub = r.subcategorie;
     }
 
-    html += `<tr data-stdid="${r.id}" data-cat="${esc(r.categorie)}" data-sub="${esc(r.subcategorie||'')}">
-      <td class="td-cat" style="padding-left:20px;font-size:12px;color:var(--muted)"></td>
-      <td class="td-sub" title="${esc(r.subcategorie||'')}">${r.subcategorie||'—'}</td>
-      <td class="td-det"><input type="text" class="cell-inp" placeholder="detail…" value="${esc(detail)}" oninput="updateTotal()"></td>
-      <td class="td-amt"><input type="number" class="cell-inp cell-amt" placeholder="0.00" step="0.01" min="0" value="${bedrag}" oninput="updateTotal()"></td>
+    html += `<tr data-cat="${esc(r.categorie)}" data-sub="${esc(r.subcategorie||'')}" data-det="${esc(r.detailbelegging||'')}">
+      <td style="padding:7px 12px 7px 28px;font-size:13px;color:var(--text)">${r.detailbelegging||'—'}</td>
+      <td class="td-amt" style="width:130px">
+        <input type="number" class="cell-inp cell-amt" placeholder="0.00" step="0.01" min="0"
+          value="${(bedrag !== '' && bedrag !== 0) ? bedrag : ''}" oninput="updateTotal()">
+      </td>
     </tr>`;
   });
 
@@ -626,31 +624,28 @@ async function saveAllRecords() {
   const maand = document.getElementById('inp-maand').value;
   if (!maand) { showToast('Kies eerst een maand','err'); return; }
 
-  // Verwijder alle bestaande records voor deze maand
   run('DELETE FROM beleggingen WHERE maand_jaar=?',[maand]);
 
-  // Sla alle rijen op met een ingevuld bedrag
-  const trows = document.querySelectorAll('#entries-tbody tr[data-stdid]');
+  const trows = document.querySelectorAll('#entries-tbody tr[data-cat]');
   let count = 0;
   trows.forEach(tr => {
     const cat    = tr.dataset.cat;
     const sub    = tr.dataset.sub || null;
-    const detail = tr.querySelector('.cell-inp:not(.cell-amt)')?.value.trim() || null;
+    const det    = tr.dataset.det || null;
     const bedrag = parseFloat(tr.querySelector('.cell-amt')?.value);
-    if (!isNaN(bedrag) && bedrag > 0) {
+    if (!isNaN(bedrag) && bedrag >= 0) {
       run('INSERT INTO beleggingen (maand_jaar,categorie,subcategorie,detailbelegging,bedrag) VALUES (?,?,?,?,?)',
-        [maand, cat, sub||null, detail||null, bedrag]);
+        [maand, cat, sub||null, det||null, bedrag]);
       count++;
     }
   });
 
   await save();
-  showToast(`${count} rij${count!==1?'en':''} opgeslagen ✓`, 'ok');
+  showToast(`${count} rijen opgeslagen ✓`, 'ok');
   updateTotal();
 }
 
 async function deleteRecord(id) {
-  if(!confirm('Record verwijderen?'))return;
   run('DELETE FROM beleggingen WHERE id=?',[id]);
   refreshInvoer(); await save();
 }
@@ -658,18 +653,34 @@ async function deleteRecord(id) {
 /* ══════ INSTELLINGEN ══════ */
 function renderInstellingen() {
   if(!db)return;
-  const data=rows('SELECT * FROM standaard_waarden ORDER BY categorie,subcategorie');
+  const data=rows('SELECT * FROM standaard_waarden ORDER BY categorie,subcategorie,detailbelegging');
   const el=document.getElementById('std-list');
   if(!data.length){el.innerHTML='<div style="color:var(--muted);font-size:13px">Nog geen waarden.</div>';return;}
-  el.innerHTML=data.map(r=>`<div class="std-item"><div class="std-cat">${r.categorie}</div><div class="std-sub">${r.subcategorie||'—'}</div><button class="btn btn-danger btn-sm" onclick="deleteStandaard(${r.id})">✕</button></div>`).join('');
+  let html=''; let prevCat=null;
+  data.forEach(r=>{
+    if(r.categorie!==prevCat){
+      html+=`<div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:1px;padding:10px 0 4px;border-top:1px solid var(--border);margin-top:4px">${r.categorie}</div>`;
+      prevCat=r.categorie;
+    }
+    html+=`<div class="std-item">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;color:var(--muted)">${r.subcategorie||'—'}</div>
+        <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.detailbelegging||'—'}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="deleteStandaard(${r.id})">✕</button>
+    </div>`;
+  });
+  el.innerHTML=html;
 }
 async function addStandaard() {
   const cat=document.getElementById('std-cat-inp').value.trim();
   const sub=document.getElementById('std-sub-inp').value.trim();
+  const det=document.getElementById('std-det-inp').value.trim();
   if(!cat){showToast('Categorie is verplicht','err');return;}
-  run('INSERT INTO standaard_waarden (categorie,subcategorie) VALUES (?,?)',[cat,sub||null]);
+  run('INSERT INTO standaard_waarden (categorie,subcategorie,detailbelegging) VALUES (?,?,?)',[cat,sub||null,det||null]);
   document.getElementById('std-cat-inp').value='';
   document.getElementById('std-sub-inp').value='';
+  document.getElementById('std-det-inp').value='';
   renderInstellingen(); await save();
 }
 async function deleteStandaard(id) {
