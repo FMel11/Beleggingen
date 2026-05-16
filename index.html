@@ -722,8 +722,17 @@ function renderCategorie() {
 }
 function selectCat(cat) {
   activeCategory=cat;
-  if(currentScreen!=='categorie') navigate('categorie');
-  else renderCategorie();
+  if(currentScreen!=='categorie') {
+    currentScreen='categorie';
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById('screen-categorie').classList.add('active');
+    document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+    document.getElementById('nav-categorie').classList.add('active');
+  }
+  // Tabs hertekenen met correcte actieve tab
+  const cats=rows('SELECT DISTINCT categorie FROM beleggingen ORDER BY categorie').map(r=>r.categorie);
+  document.getElementById('cat-tabs').innerHTML=cats.map(c=>`<button class="tab ${c===activeCategory?'active':''}" onclick="selectCat('${esc(c)}')">${c}</button>`).join('');
+  buildCatDetail();
 }
 function buildCatDetail() {
   const cat=activeCategory;
