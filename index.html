@@ -396,12 +396,32 @@ async function backupDB() {
     + String(now.getHours()).padStart(2,'0')
     + String(now.getMinutes()).padStart(2,'0');
   const fname  = `beleggingen_backup_${stamp}.db`;
-  const blob   = new Blob([db.export()], { type: 'application/octet-stream' });
-  const url    = URL.createObjectURL(blob);
-  const a      = Object.assign(document.createElement('a'), { href: url, download: fname });
+  const data   = db.export();
+
+  // Windows: schrijf backup naar dezelfde map als de db
+  if (AUTO_MODE && fileHandle) {
+    try {
+      const dirHandle = await fileHandle.getParent?.();
+      if (dirHandle) {
+        const backupHandle = await dirHandle.getFileHandle(fname, { create: true });
+        const writable = await backupHandle.createWritable();
+        await writable.write(data);
+        await writable.close();
+        showToast(`Backup opgeslagen: ${fname}`, 'ok');
+        return;
+      }
+    } catch(e) {
+      // getParent niet beschikbaar — val terug op download
+    }
+  }
+
+  // Fallback: download (iPhone of als getParent niet werkt)
+  const blob = new Blob([data], { type: 'application/octet-stream' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: fname });
   a.click();
   URL.revokeObjectURL(url);
-  showToast(`Backup: ${fname}`, 'ok');
+  showToast(`Backup gedownload: ${fname}`, 'ok');
 }
 
 /* ══════════════════════════════════════════════════════
