@@ -717,9 +717,24 @@ function renderCategorie() {
   const cats=rows('SELECT DISTINCT categorie FROM beleggingen ORDER BY categorie').map(r=>r.categorie);
   if(!cats.length){document.getElementById('cat-tabs').innerHTML='<div style="color:var(--muted);font-size:13px">Nog geen data</div>';return;}
   if(!activeCategory||!cats.includes(activeCategory)) activeCategory=cats[0];
-  document.getElementById('cat-tabs').innerHTML=cats.map(c=>`<button class="tab ${c===activeCategory?'active':''}" onclick="selectCat('${esc(c)}')">${c}</button>`).join('');
+  buildCatTabs(cats);
   buildCatDetail();
 }
+
+function buildCatTabs(cats) {
+  document.getElementById('cat-tabs').innerHTML=cats.map(c=>
+    `<button class="tab ${c===activeCategory?'active':''}" data-cat="${esc(c)}" onclick="onCatTab(this)">${c}</button>`
+  ).join('');
+}
+
+function onCatTab(btn) {
+  activeCategory = btn.getAttribute('data-cat');
+  // Actieve stijl updaten zonder herbouw
+  document.querySelectorAll('#cat-tabs .tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildCatDetail();
+}
+
 function selectCat(cat) {
   activeCategory=cat;
   if(currentScreen!=='categorie') {
@@ -729,9 +744,8 @@ function selectCat(cat) {
     document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
     document.getElementById('nav-categorie').classList.add('active');
   }
-  // Tabs hertekenen met correcte actieve tab
   const cats=rows('SELECT DISTINCT categorie FROM beleggingen ORDER BY categorie').map(r=>r.categorie);
-  document.getElementById('cat-tabs').innerHTML=cats.map(c=>`<button class="tab ${c===activeCategory?'active':''}" onclick="selectCat('${esc(c)}')">${c}</button>`).join('');
+  buildCatTabs(cats);
   buildCatDetail();
 }
 function buildCatDetail() {
