@@ -164,6 +164,10 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 .add-row-btn { width: 32px; height: 32px; border-radius: 7px; border: none; background: var(--gold); color: #0b0e17; font-size: 20px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .15s; }
 .add-row-btn:active { transform: scale(.93); }
 .inv-footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--surface); }
+.cell-inp { width: 100%; padding: 6px 8px; font-size: 13px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--font); outline: none; min-width: 80px; }
+.cell-inp:focus { border-color: var(--gold); background: rgba(201,168,76,.04); }
+.cell-amt { font-family: var(--mono); text-align: right; min-width: 90px; }
+.cell-amt:not(:placeholder-shown) { color: var(--green); }
 </style>
 </head>
 <body>
@@ -190,24 +194,18 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
     <!-- INVOER -->
     <div id="screen-invoer" class="screen active">
       <div class="page-title">Invoer</div>
-      <div class="page-sub">Voeg beleggingen toe voor een maand</div>
+      <div class="page-sub">Vul bedragen in voor de geselecteerde maand</div>
       <div class="month-bar">
         <input type="month" id="inp-maand" onchange="refreshInvoer()">
+        <button class="btn btn-primary" style="width:auto;padding:10px 18px" onclick="saveAllRecords()">💾 Opslaan</button>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
         <div style="overflow-x:auto">
           <table class="inv-table">
             <thead><tr>
-              <th>Categorie</th><th>Subcategorie</th><th>Detail</th><th>Bedrag</th><th></th>
+              <th>Categorie</th><th>Subcategorie</th><th>Detail</th><th style="text-align:right">Bedrag €</th>
             </tr></thead>
             <tbody id="entries-tbody"></tbody>
-            <tfoot><tr class="inv-input-row">
-              <td><select id="inp-cat" onchange="fillSubcat()"><option value="">Categorie…</option></select></td>
-              <td><select id="inp-subcat"><option value="">Subcategorie…</option></select></td>
-              <td><input type="text" id="inp-detail" placeholder="Detail…"></td>
-              <td><input type="number" id="inp-bedrag" placeholder="0.00" step="0.01" min="0"></td>
-              <td><button class="add-row-btn" onclick="addRecord()">＋</button></td>
-            </tr></tfoot>
           </table>
         </div>
         <div class="inv-footer">
@@ -554,54 +552,103 @@ function navigate(screen) {
 }
 
 /* ══════ INVOER ══════ */
-function renderInvoer() { if(!db)return; fillCatDropdown(); refreshInvoer(); }
+function renderInvoer() { if(!db)return; refreshInvoer(); }
 
-function fillCatDropdown() {
-  const cats = [...new Set(rows('SELECT DISTINCT categorie FROM standaard_waarden ORDER BY categorie').map(r=>r.categorie))];
-  document.getElementById('inp-cat').innerHTML =
-    '<option value="">Kies categorie…</option>' + cats.map(c=>`<option value="${esc(c)}">${c}</option>`).join('');
-  fillSubcat();
-}
-function fillSubcat() {
-  const cat  = document.getElementById('inp-cat').value;
-  const subs = rows('SELECT DISTINCT subcategorie FROM standaard_waarden WHERE categorie=? ORDER BY subcategorie',[cat]).map(r=>r.subcategorie).filter(Boolean);
-  document.getElementById('inp-subcat').innerHTML =
-    '<option value="">Kies subcategorie…</option>' + subs.map(s=>`<option value="${esc(s)}">${s}</option>`).join('');
-}
 function refreshInvoer() {
   if(!db)return;
-  const maand = document.getElementById('inp-maand').value;
-  const data  = rows('SELECT * FROM beleggingen WHERE maand_jaar=? ORDER BY categorie,subcategorie',[maand]);
-  const total = data.reduce((s,r)=>s+r.bedrag,0);
-  document.getElementById('entries-title').textContent = `${fmtMaand(maand)} — ${data.length} rij${data.length!==1?'en':''}`;
+  const maand   = document.getElementById('inp-maand').value;
+  const stdRows = rows('SELECT * FROM standaard_waarden ORDER BY categorie, subcategorie');
+  const existing= rows('SELECT * FROM beleggingen WHERE maand_jaar=?',[maand]);
+
+  // Bouw lookup: "cat||sub" -> record
+  const lookup = {};
+  existing.forEach(r => {
+    const key = (r.categorie||'') + '||' + (r.subcategorie||'');
+    lookup[key] = r;
+  });
+
+  const total = existing.reduce((s,r)=>s+r.bedrag,0);
+  document.getElementById('entries-title').textContent = `${fmtMaand(maand)}`;
   document.getElementById('entries-total').textContent = fmtEur(total);
-  const tbody = document.getElementById('entries-tbody');
-  if (!data.length) {
-    tbody.innerHTML=`<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Nog geen invoer voor deze maand.</td></tr>`;
+
+  if (!stdRows.length) {
+    document.getElementById('entries-tbody').innerHTML =
+      `<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
+        Voeg eerst standaardwaarden toe via ⚙️ Instellingen.
+      </td></tr>`;
     return;
   }
-  tbody.innerHTML = data.map(r=>`
-    <tr>
-      <td class="td-cat" title="${esc(r.categorie)}">${r.categorie}</td>
+
+  // Groepeer per categorie
+  const grouped = {};
+  stdRows.forEach(r => {
+    if (!grouped[r.categorie]) grouped[r.categorie] = [];
+    grouped[r.categorie].push(r);
+  });
+
+  let html = '';
+  let prevCat = null;
+  stdRows.forEach(r => {
+    const key     = (r.categorie||'') + '||' + (r.subcategorie||'');
+    const rec     = lookup[key];
+    const bedrag  = rec ? rec.bedrag : '';
+    const detail  = rec ? (rec.detailbelegging||'') : '';
+    const rowId   = `row-${r.id}`;
+
+    // Categorie-scheidingsrij
+    if (r.categorie !== prevCat) {
+      html += `<tr class="cat-group-row">
+        <td colspan="4" style="padding:8px 12px;background:rgba(201,168,76,.06);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);font-weight:600">${r.categorie}</td>
+      </tr>`;
+      prevCat = r.categorie;
+    }
+
+    html += `<tr data-stdid="${r.id}" data-cat="${esc(r.categorie)}" data-sub="${esc(r.subcategorie||'')}">
+      <td class="td-cat" style="padding-left:20px;font-size:12px;color:var(--muted)"></td>
       <td class="td-sub" title="${esc(r.subcategorie||'')}">${r.subcategorie||'—'}</td>
-      <td class="td-det" title="${esc(r.detailbelegging||'')}">${r.detailbelegging||'—'}</td>
-      <td class="td-amt">${fmtEur(r.bedrag)}</td>
-      <td class="td-del"><button class="del-btn" onclick="deleteRecord(${r.id})">✕</button></td>
-    </tr>`).join('');
+      <td class="td-det"><input type="text" class="cell-inp" placeholder="detail…" value="${esc(detail)}" oninput="updateTotal()"></td>
+      <td class="td-amt"><input type="number" class="cell-inp cell-amt" placeholder="0.00" step="0.01" min="0" value="${bedrag}" oninput="updateTotal()"></td>
+    </tr>`;
+  });
+
+  document.getElementById('entries-tbody').innerHTML = html;
+  updateTotal();
 }
-async function addRecord() {
-  const maand=document.getElementById('inp-maand').value;
-  const cat=document.getElementById('inp-cat').value;
-  const sub=document.getElementById('inp-subcat').value;
-  const det=document.getElementById('inp-detail').value.trim();
-  const bed=parseFloat(document.getElementById('inp-bedrag').value);
-  if(!maand||!cat||isNaN(bed)||bed<=0){showToast('Vul minstens categorie en bedrag in','err');return;}
-  run('INSERT INTO beleggingen (maand_jaar,categorie,subcategorie,detailbelegging,bedrag) VALUES (?,?,?,?,?)',[maand,cat,sub||null,det||null,bed]);
-  document.getElementById('inp-detail').value='';
-  document.getElementById('inp-bedrag').value='';
-  refreshInvoer();
+
+function updateTotal() {
+  const inputs = document.querySelectorAll('#entries-tbody .cell-amt');
+  let total = 0;
+  inputs.forEach(inp => { const v = parseFloat(inp.value); if (!isNaN(v)) total += v; });
+  document.getElementById('entries-total').textContent = fmtEur(total);
+}
+
+async function saveAllRecords() {
+  const maand = document.getElementById('inp-maand').value;
+  if (!maand) { showToast('Kies eerst een maand','err'); return; }
+
+  // Verwijder alle bestaande records voor deze maand
+  run('DELETE FROM beleggingen WHERE maand_jaar=?',[maand]);
+
+  // Sla alle rijen op met een ingevuld bedrag
+  const trows = document.querySelectorAll('#entries-tbody tr[data-stdid]');
+  let count = 0;
+  trows.forEach(tr => {
+    const cat    = tr.dataset.cat;
+    const sub    = tr.dataset.sub || null;
+    const detail = tr.querySelector('.cell-inp:not(.cell-amt)')?.value.trim() || null;
+    const bedrag = parseFloat(tr.querySelector('.cell-amt')?.value);
+    if (!isNaN(bedrag) && bedrag > 0) {
+      run('INSERT INTO beleggingen (maand_jaar,categorie,subcategorie,detailbelegging,bedrag) VALUES (?,?,?,?,?)',
+        [maand, cat, sub||null, detail||null, bedrag]);
+      count++;
+    }
+  });
+
   await save();
+  showToast(`${count} rij${count!==1?'en':''} opgeslagen ✓`, 'ok');
+  updateTotal();
 }
+
 async function deleteRecord(id) {
   if(!confirm('Record verwijderen?'))return;
   run('DELETE FROM beleggingen WHERE id=?',[id]);
